@@ -457,7 +457,29 @@ async function getAuctionDetails(page, auctionUrl) {
                         // Шукаємо h6 елемент з датами
                         const dateElement = parentContainer.querySelector('h6');
                         if (dateElement && dateElement.textContent.trim()) {
-                            proposalPeriod = dateElement.textContent.trim();
+                            const fullText = dateElement.textContent.trim();
+                            
+                            // Шукаємо слово "по" та витягуємо дату після нього
+                            const poIndex = fullText.indexOf('по');
+                            if (poIndex !== -1) {
+                                // Беремо текст після "по"
+                                let dateAfterPo = fullText.substring(poIndex + 2).trim();
+                                
+                                // Видаляємо час доби (все що після пробілу та цифр:годин:хвилин)
+                                const timeIndex = dateAfterPo.indexOf(' ');
+                                if (timeIndex !== -1) {
+                                    // Перевіряємо чи після пробілу йде час (формат XX:XX)
+                                    const afterSpace = dateAfterPo.substring(timeIndex + 1);
+                                    if (/^\d{1,2}:\d{2}/.test(afterSpace)) {
+                                        dateAfterPo = dateAfterPo.substring(0, timeIndex).trim();
+                                    }
+                                }
+                                
+                                proposalPeriod = dateAfterPo;
+                            } else {
+                                // Якщо "по" не знайдено, беремо весь текст
+                                proposalPeriod = fullText;
+                            }
                             break;
                         }
                     }
