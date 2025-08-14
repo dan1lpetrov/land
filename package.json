@@ -1,0 +1,24 @@
+{
+  "name": "land",
+  "version": "1.0.0",
+  "description": "Land auction scraper",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "build": "echo 'No build step required'",
+    "vercel-build": "echo 'Build completed'"
+  },
+  "keywords": ["scraper", "auctions", "land"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "puppeteer": "^21.5.2",
+    "googleapis": "^128.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
