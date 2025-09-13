@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
+    "prozorro": "node prozorro_scraper.js",
     "build": "echo 'No build step required'",
     "vercel-build": "echo 'Build completed'"
   },
@@ -14,7 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "puppeteer": "^21.5.2",
+    "puppeteer": "^24.16.1",
     "googleapis": "^128.0.0",
     "dotenv": "^16.3.1"
   },

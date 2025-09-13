@@ -218,6 +218,8 @@ async function getAuctionDetails(page, auctionUrl) {
             let phoneNumber = 'Не знайдено';
             let auctionDate = 'Не знайдено';
             let proposalPeriod = 'Не знайдено';
+            let propertyClassifier = 'Не знайдено';
+            let lotExhibitedBy = 'Не знайдено';
             
             // Опис лоту
             const lotDescElement = document.querySelector('.MuiGrid-spacing-xs-3 div:nth-of-type(3) div.MuiAccordionDetails-root');
@@ -486,6 +488,40 @@ async function getAuctionDetails(page, auctionUrl) {
                 }
             }
             
+            // Класифікатор майна/активів - шукаємо за текстом заголовка
+            for (const h6 of allH6Elements) {
+                const text = h6.textContent.trim();
+                if (text === 'Класифікатор майна/активів:') {
+                    // Знаходимо батьківський div з класом MuiGrid-container
+                    const parentContainer = h6.closest('.MuiGrid-container');
+                    if (parentContainer) {
+                        // Шукаємо наступний div з класом MuiGrid-grid-md-true
+                        const valueElement = parentContainer.querySelector('.MuiGrid-grid-md-true h6');
+                        if (valueElement && valueElement.textContent.trim() && valueElement !== h6) {
+                            propertyClassifier = valueElement.textContent.trim();
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Лот виставляється - шукаємо за текстом заголовка
+            for (const h6 of allH6Elements) {
+                const text = h6.textContent.trim();
+                if (text === 'Лот виставляється:') {
+                    // Знаходимо батьківський div з класом MuiGrid-container
+                    const parentContainer = h6.closest('.MuiGrid-container');
+                    if (parentContainer) {
+                        // Шукаємо наступний div з класом MuiGrid-grid-md-true
+                        const valueElement = parentContainer.querySelector('.MuiGrid-grid-md-true h6');
+                        if (valueElement && valueElement.textContent.trim() && valueElement !== h6) {
+                            lotExhibitedBy = valueElement.textContent.trim();
+                            break;
+                        }
+                    }
+                }
+            }
+            
             return {
                 url,
                 lotDescription,
@@ -503,6 +539,8 @@ async function getAuctionDetails(page, auctionUrl) {
                 phoneNumber,
                 auctionDate,
                 proposalPeriod,
+                propertyClassifier,
+                lotExhibitedBy,
                 areaSelectorText,
                 areaSelectorClasses,
                 areaSelectorParent
@@ -525,6 +563,8 @@ async function getAuctionDetails(page, auctionUrl) {
         console.log(`  Телефон: ${details.phoneNumber}`);
         console.log(`  Дата аукціону: ${details.auctionDate}`);
         console.log(`  Період пропозицій: ${details.proposalPeriod}`);
+        console.log(`  Класифікатор майна/активів: ${details.propertyClassifier}`);
+        console.log(`  Лот виставляється: ${details.lotExhibitedBy}`);
         
         // Додаткова діагностика селекторів
         console.log(`🔍 Діагностика селекторів:`);
@@ -610,7 +650,9 @@ async function getAuctionDetails(page, auctionUrl) {
             contactPerson: 'Помилка',
             phoneNumber: 'Помилка',
             auctionDate: 'Помилка',
-            proposalPeriod: 'Помилка'
+            proposalPeriod: 'Помилка',
+            propertyClassifier: 'Помилка',
+            lotExhibitedBy: 'Помилка'
         };
     }
 }
@@ -674,7 +716,7 @@ async function saveToGoogleSheets(data, spreadsheetId) {
         // Очищаємо існуючі дані та додаємо нові
         await sheets.spreadsheets.values.clear({
             spreadsheetId,
-            range: 'A:H',
+            range: 'A:T',
         });
         
         await sheets.spreadsheets.values.update({
@@ -704,7 +746,7 @@ async function addRowToGoogleSheets(rowData, spreadsheetId, rowNumber) {
                 'Срок окупності', 'Орендна ставка (сума за рік)', 'Кадастровий номер',
                 'Область', 'Населений пункт', 'Повна юридична назва організації',
                 'Дата початку та закінчення договору оренди', 'ПІБ', 'номер телефону',
-                'Дата аукціону', 'Період подання пропозицій'
+                'Дата аукціону', 'Період подання пропозицій', 'Класифікатор майна/активів', 'Лот виставляється'
             ];
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
@@ -734,7 +776,9 @@ async function addRowToGoogleSheets(rowData, spreadsheetId, rowNumber) {
             rowData.contactPerson,
             rowData.phoneNumber,
             rowData.auctionDate,
-            rowData.proposalPeriod
+            rowData.proposalPeriod,
+            rowData.propertyClassifier,
+            rowData.lotExhibitedBy
         ];
         
         try {
@@ -755,7 +799,7 @@ async function addRowToGoogleSheets(rowData, spreadsheetId, rowNumber) {
                 // Отримуємо метадані таблиці
                 const metadata = await sheets.spreadsheets.get({
                     spreadsheetId,
-                    ranges: ['Sheet1!A:H'],
+                    ranges: ['Sheet1!A:T'],
                     fields: 'sheets.properties'
                 });
                 
@@ -856,7 +900,7 @@ async function main() {
             console.log(`\n📄 Обробляю сторінку ${currentPage}: ${pageUrl}`);
             
             try {
-                await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+                await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
                 
                 // Додаткове очікування для динамічного контенту
                 console.log('⏳ Очікую завантаження динамічного контенту...');
