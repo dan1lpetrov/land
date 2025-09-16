@@ -42,6 +42,34 @@ async function getBaseUrlFromGoogleSheet() {
     }
 }
 
+async function getStopWordsFromGoogleSheet() {
+    try {
+        const sheets = getGoogleSheets();
+        const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
+        
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'змінні!B1',
+        });
+        
+        if (response.data.values && response.data.values[0] && response.data.values[0][0]) {
+            const stopWordsText = response.data.values[0][0].trim();
+            console.log(`📋 Отримано стоп-слова з Google таблиці: ${stopWordsText}`);
+            
+            // Розбиваємо по комах і очищаємо від пробілів
+            const stopWords = stopWordsText.split(',').map(word => word.trim().toLowerCase());
+            console.log(`📝 Стоп-слова для фільтрації: ${stopWords.join(', ')}`);
+            return stopWords;
+        } else {
+            console.log('⚠️ Не знайдено стоп-слова в клітинці змінні!B1');
+            return []; // Повертаємо порожній масив
+        }
+    } catch (error) {
+        console.log('⚠️ Помилка отримання стоп-слів з Google таблиці:', error.message);
+        return []; // Повертаємо порожній масив
+    }
+}
+
 async function getAuctionLinks(page) {
     console.log('🔍 Шукаю товари на поточній сторінці...');
     
@@ -63,35 +91,36 @@ async function getAuctionLinks(page) {
     }
 }
 
-async function hasNextPage(page) {
+async function hasNextPage(page, currentPage) {
     try {
-        return await page.evaluate(() => {
-            // Шукаємо кнопку "Наступна сторінка"
-            const nextButton = document.querySelector('.pagination__btn-next a');
-            if (nextButton && !nextButton.classList.contains('disabled')) {
-                return true;
-            }
-            
-            return false;
-        });
+        // Перевіряємо, чи є аукціони на поточній сторінці
+        const links = await getAuctionLinks(page);
+        return links.length > 0;
     } catch (error) {
         console.log('⚠️ Помилка при перевірці наявності наступної сторінки:', error.message);
         return false;
     }
 }
 
-async function goToNextPage(page) {
+function buildPageUrl(baseUrl, pageNumber) {
+    if (pageNumber === 1) {
+        return baseUrl;
+    }
+    // Перевіряємо, чи в URL вже є параметри
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${separator}page=${pageNumber}`;
+}
+
+async function goToNextPage(page, currentPage, baseUrl) {
     try {
-        return await page.evaluate(() => {
-            // Шукаємо кнопку "Наступна сторінка"
-            const nextButton = document.querySelector('.pagination__btn-next a');
-            if (nextButton && !nextButton.classList.contains('disabled')) {
-                nextButton.click();
-                return true;
-            }
-            
-            return false;
-        });
+        const nextPage = currentPage + 1;
+        const nextPageUrl = buildPageUrl(baseUrl, nextPage);
+        console.log(`📍 Переходжу на сторінку ${nextPage}: ${nextPageUrl}`);
+        
+        await page.goto(nextPageUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        return true;
     } catch (error) {
         console.log('⚠️ Помилка при переході на наступну сторінку:', error.message);
         return false;
@@ -165,17 +194,25 @@ async function getAuctionResults(page, auctionUrl) {
                 
                 // Відсоток зростання ціни буде розрахований формулою в Google Таблиці
                 
-                // Переважне право
-                const priorityElement = document.querySelector('.priority-step');
-                if (priorityElement) {
-                    results.preferentialRight = priorityElement.textContent.trim();
-                } else {
-                    // Шукаємо інші можливі селектори для переважного права
-                    const priorityText = document.body.textContent;
-                    if (priorityText.includes('переважним правом')) {
-                        const priorityMatch = priorityText.match(/[^.]*переважним правом[^.]*\./);
-                        if (priorityMatch) {
-                            results.preferentialRight = priorityMatch[0].trim();
+                // Переважне право - шукаємо в результатах аукціону
+                const winnerResultsElement = document.querySelector('.results.is-winner');
+                if (winnerResultsElement) {
+                    // Перевіряємо, чи є у переможця переважне право
+                    const priorityBidder = winnerResultsElement.querySelector('.results__priority-bidder');
+                    if (priorityBidder) {
+                        results.preferentialRight = 'Зробив максимальну пропозицію';
+                    } else {
+                        // Шукаємо інформацію про відсутність переважного права
+                        const priorityStep = document.querySelector('.priority-step');
+                        if (priorityStep) {
+                            const priorityText = priorityStep.textContent.trim();
+                            if (priorityText.includes('був відсутній')) {
+                                results.preferentialRight = 'Був відсутній';
+                            } else if (priorityText.includes('не скористався')) {
+                                results.preferentialRight = 'Не скористався';
+                            } else {
+                                results.preferentialRight = priorityText;
+                            }
                         }
                     }
                 }
@@ -198,6 +235,9 @@ async function getAuctionResults(page, auctionUrl) {
                 preferentialRight: 'Не знайдено'
             };
         }
+        
+        // Скорочуємо значення переважного права
+        auctionResults.preferentialRight = shortenPreferentialRight(auctionResults.preferentialRight);
         
         console.log(`✅ Зібрано результати аукціону:`);
         console.log(`  Кількість учасників: ${auctionResults.participantsCount}`);
@@ -652,6 +692,65 @@ async function getAuctionDetailsFromUaLand(page, auctionUrl) {
     }
 }
 
+async function getAuctionTitle(page, auctionUrl) {
+    try {
+        await page.goto(auctionUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        // Додаткове очікування для повного завантаження
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Отримуємо тільки назву лоту
+        const lotTitle = await page.evaluate(() => {
+            const titleElement = document.querySelector('.information-title span');
+            return titleElement ? titleElement.textContent.trim() : '';
+        });
+        
+        return lotTitle;
+    } catch (error) {
+        console.log(`⚠️ Помилка при отриманні назви аукціону: ${error.message}`);
+        return '';
+    }
+}
+
+function shouldSkipAuction(lotTitle, stopWords) {
+    if (!lotTitle) return true;
+    
+    const lowerTitle = lotTitle.toLowerCase();
+    
+    // Перевіряємо кожне стоп-слово
+    for (const stopWord of stopWords) {
+        if (lowerTitle.includes(stopWord)) {
+            console.log(`⏭️ Пропускаю аукціон: "${lotTitle}" (містить стоп-слово: "${stopWord}")`);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function shortenPreferentialRight(preferentialRight) {
+    if (!preferentialRight || preferentialRight === 'Не знайдено') {
+        return 'Не знайдено';
+    }
+    
+    const lowerText = preferentialRight.toLowerCase();
+    
+    if (lowerText.includes('не скористався ним') || lowerText.includes('не скористався')) {
+        return 'Не скористався';
+    }
+    
+    if (lowerText.includes('був відсутній')) {
+        return 'Був відсутній';
+    }
+    
+    if (lowerText.includes('зробив максимальну цінову пропозицію') || lowerText.includes('зробив максимальну пропозицію')) {
+        return 'Зробив максимальну пропозицію';
+    }
+    
+    // Якщо не знайдено відповідності, повертаємо оригінальне значення
+    return preferentialRight;
+}
+
 async function getAuctionDetails(page, auctionUrl) {
     console.log(`🔍 Збираю дані з: ${auctionUrl}`);
     
@@ -832,11 +931,20 @@ async function getAuctionDetails(page, auctionUrl) {
                 winner = winnerElement.textContent.trim();
             }
             
-            // Переважне право
+            // Переважне право - шукаємо в details з класом "inform-details lots__wrap" який містить інформацію про переважне право
             let preferentialRight = 'Не знайдено';
-            const preferentialElement = document.querySelector('.preferential-right, .priority, [data-field="preferential"]');
-            if (preferentialElement) {
-                preferentialRight = preferentialElement.textContent.trim();
+            const allDetails = document.querySelectorAll('.inform-details.lots__wrap');
+            
+            for (const details of allDetails) {
+                const summary = details.querySelector('.inform-details__summary');
+                if (summary && summary.textContent.includes('переважним правом')) {
+                    // Шукаємо span з назвою організації
+                    const orgNameElement = details.querySelector('span.lots__value');
+                    if (orgNameElement) {
+                        preferentialRight = orgNameElement.textContent.trim();
+                        break;
+                    }
+                }
             }
             
             return {
@@ -982,6 +1090,9 @@ async function getAuctionDetails(page, auctionUrl) {
             }
         }
         
+        // Скорочуємо значення переважного права
+        details.preferentialRight = shortenPreferentialRight(details.preferentialRight);
+        
         return details;
         
     } catch (error) {
@@ -1008,12 +1119,66 @@ async function getAuctionDetails(page, auctionUrl) {
     }
 }
 
-async function addRowToAnalyticsSheet(rowData, spreadsheetId, rowNumber) {
+// Кеш для зберігання URL, які вже перевірені
+let urlCache = new Set();
+
+async function isUrlAlreadyInSheet(url, spreadsheetId) {
+    try {
+        // Спочатку перевіряємо кеш
+        if (urlCache.has(url)) {
+            return true;
+        }
+        
+        const sheets = getGoogleSheets();
+        
+        // Отримуємо всі URL з колонки A
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'Аналітика!A:A',
+        });
+        
+        if (response.data.values) {
+            // Перевіряємо, чи є наш URL в таблиці
+            const isDuplicate = response.data.values.some(row => row[0] === url);
+            
+            // Додаємо в кеш, якщо знайшли дублікат
+            if (isDuplicate) {
+                urlCache.add(url);
+            }
+            
+            return isDuplicate;
+        }
+        
+        return false;
+    } catch (error) {
+        console.log(`⚠️ Помилка при перевірці дублікатів: ${error.message}`);
+        return false; // У разі помилки додаємо рядок
+    }
+}
+
+// Функція для очищення кешу (можна викликати при початку нового запуску)
+function clearUrlCache() {
+    urlCache.clear();
+    console.log('🧹 Кеш URL очищено');
+}
+
+async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
     try {
         const sheets = getGoogleSheets();
         
+        // Знаходимо останній вільний рядок
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'Аналітика!A:A',
+        });
+        
+        let nextRow = 1;
+        if (response.data.values) {
+            nextRow = response.data.values.length + 1;
+        }
+        
         // Якщо це перший рядок, додаємо заголовки
-        if (rowNumber === 1) {
+        if (nextRow === 1) {
             const headers = [
                 'URL', 'Опис лоту', 'Площа ділянки, га', 'Стартова ціна', 
                 'Ціна за га в $', 'Нормативна грошова оцінка, грн', 'Експертна грошова оцінка, грн',
@@ -1029,10 +1194,11 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId, rowNumber) {
                 valueInputOption: 'RAW',
                 resource: { values: [headers] },
             });
+            nextRow = 2; // Наступний рядок після заголовків
         }
         
         // Додаємо рядок даних
-        const currentRow = rowNumber + 1; // Номер поточного рядка
+        const currentRow = nextRow; // Номер поточного рядка
         const row = [
             rowData.url,
             rowData.lotDescription,
@@ -1066,17 +1232,22 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId, rowNumber) {
         try {
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `Аналітика!A${rowNumber + 1}`,
+                range: `Аналітика!A${currentRow}`,
                 valueInputOption: 'USER_ENTERED',
                 resource: { values: [row] },
             });
             
-            console.log(`✅ Додано рядок ${rowNumber + 1}: ${rowData.url}`);
+            console.log(`✅ Додано рядок ${currentRow}: ${rowData.url}`);
+            
+            // Додаємо URL до кешу, щоб уникнути повторної обробки
+            urlCache.add(rowData.url);
+            
+            return true; // Повертаємо true при успішному додаванні
             
         } catch (rangeError) {
             // Якщо помилка з діапазоном, спробуємо розширити таблицю
             if (rangeError.message.includes('exceeds grid limits')) {
-                console.log(`📏 Розширюю таблицю для рядка ${rowNumber + 1}...`);
+                console.log(`📏 Розширюю таблицю для рядка ${currentRow}...`);
                 
                 // Отримуємо метадані таблиці
                 const metadata = await sheets.spreadsheets.get({
@@ -1109,19 +1280,24 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId, rowNumber) {
                 // Тепер додаємо рядок
                 await sheets.spreadsheets.values.update({
                     spreadsheetId,
-                    range: `Аналітика!A${rowNumber + 1}`,
+                    range: `Аналітика!A${currentRow}`,
                     valueInputOption: 'USER_ENTERED',
                     resource: { values: [row] },
                 });
                 
-                console.log(`✅ Додано рядок ${rowNumber + 1}: ${rowData.url} (таблицю розширено)`);
+                console.log(`✅ Додано рядок ${currentRow}: ${rowData.url} (таблицю розширено)`);
+                
+                // Додаємо URL до кешу, щоб уникнути повторної обробки
+                urlCache.add(rowData.url);
+                
+                return true; // Повертаємо true при успішному додаванні
             } else {
                 throw rangeError;
             }
         }
         
     } catch (error) {
-        console.error(`❌ Помилка при додаванні рядка ${rowNumber + 1}:`, error.message);
+        console.error(`❌ Помилка при додаванні рядка:`, error.message);
         throw error;
     }
 }
@@ -1153,6 +1329,12 @@ async function main() {
             return;
         }
         
+        // Отримуємо стоп-слова з Google таблиці
+        const stopWords = await getStopWordsFromGoogleSheet();
+        
+        // Очищаємо кеш URL на початку
+        clearUrlCache();
+        
         // Очищаємо таблицю перед початком
         let startRow = 1;
         try {
@@ -1183,25 +1365,58 @@ async function main() {
         let currentPage = 1;
         let totalProcessed = 0;
         let totalSuccess = 0;
+        let totalDuplicates = 0;
+        let totalFiltered = 0;
         let hasMorePages = true;
+        let consecutiveEmptyPages = 0; // Лічильник послідовних порожніх сторінок
 
         while (hasMorePages) {
             console.log(`\n📄 === ОБРОБКА СТОРІНКИ ${currentPage} ===`);
+            
+            // Формуємо URL для поточної сторінки
+            const currentPageUrl = buildPageUrl(BASE_URL, currentPage);
+            console.log(`📍 URL сторінки: ${currentPageUrl}`);
+            
+            // Переходимо на поточну сторінку
+            try {
+                await page.goto(currentPageUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+                await new Promise(resolve => setTimeout(resolve, 3000));
+            } catch (error) {
+                console.log(`⚠️ Помилка при переході на сторінку ${currentPage}: ${error.message}`);
+                consecutiveEmptyPages++;
+                if (consecutiveEmptyPages >= 3) {
+                    console.log(`⚠️ 3 послідовні помилки, зупиняю збір`);
+                    break;
+                }
+                currentPage++;
+                continue;
+            }
             
             // Збираємо посилання з поточної сторінки
             const pageLinks = await getAuctionLinks(page);
             
             if (pageLinks.length === 0) {
                 console.log(`⚠️ На сторінці ${currentPage} не знайдено жодного аукціону`);
-                hasMorePages = false;
-                break;
+                consecutiveEmptyPages++;
+                if (consecutiveEmptyPages >= 3) {
+                    console.log(`⚠️ 3 послідовні порожні сторінки, зупиняю збір`);
+                    hasMorePages = false;
+                    break;
+                }
+                currentPage++;
+                continue;
             }
+
+            // Скидаємо лічильник порожніх сторінок, якщо знайшли аукціони
+            consecutiveEmptyPages = 0;
 
             console.log(`📊 Знайдено ${pageLinks.length} аукціонів на сторінці ${currentPage}`);
 
             // Обробляємо кожен аукціон з поточної сторінки
             let pageProcessed = 0;
             let pageSuccess = 0;
+            let pageDuplicates = 0;
+            let pageFiltered = 0;
 
             for (let i = 0; i < pageLinks.length; i++) {
                 const auctionUrl = pageLinks[i];
@@ -1209,17 +1424,42 @@ async function main() {
                 totalProcessed++;
 
                 try {
-                    console.log(`\n🔄 [Сторінка ${currentPage}] Обробляю аукціон ${pageProcessed}/${pageLinks.length}: ${auctionUrl}`);
+                    console.log(`\n🔄 [Сторінка ${currentPage}] Перевіряю аукціон ${pageProcessed}/${pageLinks.length}: ${auctionUrl}`);
 
-                    // Збираємо дані з аукціону
+                    // 1. Спочатку перевіряємо, чи вже є такий URL в таблиці
+                    const isDuplicate = await isUrlAlreadyInSheet(auctionUrl, spreadsheetId);
+                    if (isDuplicate) {
+                        console.log(`⏭️ [Сторінка ${currentPage}] Аукціон ${pageProcessed} пропущено (дублікат): ${auctionUrl}`);
+                        pageDuplicates++;
+                        totalDuplicates++;
+                        continue;
+                    }
+
+                    // 2. Отримуємо назву аукціону для перевірки фільтрів
+                    const lotTitle = await getAuctionTitle(page, auctionUrl);
+                    
+                    // 3. Перевіряємо фільтри
+                    if (shouldSkipAuction(lotTitle, stopWords)) {
+                        console.log(`⏭️ [Сторінка ${currentPage}] Аукціон ${pageProcessed} пропущено через фільтрацію`);
+                        pageFiltered++;
+                        totalFiltered++;
+                        continue;
+                    }
+
+                    // 4. Якщо пройшли всі перевірки - збираємо дані
+                    console.log(`✅ [Сторінка ${currentPage}] Аукціон ${pageProcessed} пройшов перевірки, збираю дані...`);
                     const details = await getAuctionDetails(page, auctionUrl);
 
-                    // Додаємо рядок до Google таблиці
-                    await addRowToAnalyticsSheet(details, spreadsheetId, totalProcessed);
+                    // 5. Додаємо рядок до Google таблиці
+                    const wasAdded = await addRowToAnalyticsSheet(details, spreadsheetId);
 
-                    pageSuccess++;
-                    totalSuccess++;
-                    console.log(`✅ [Сторінка ${currentPage}] Аукціон ${pageProcessed} успішно оброблено`);
+                    if (wasAdded) {
+                        pageSuccess++;
+                        totalSuccess++;
+                        console.log(`✅ [Сторінка ${currentPage}] Аукціон ${pageProcessed} успішно оброблено`);
+                    } else {
+                        console.log(`⏭️ [Сторінка ${currentPage}] Аукціон ${pageProcessed} не додано до таблиці`);
+                    }
 
                     // Пауза між обробкою аукціонів
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1234,57 +1474,16 @@ async function main() {
             console.log(`\n📊 Підсумок сторінки ${currentPage}:`);
             console.log(`   📄 Аукціонів на сторінці: ${pageLinks.length}`);
             console.log(`   ✅ Успішно оброблено: ${pageSuccess}`);
-            console.log(`   ❌ Помилок: ${pageProcessed - pageSuccess}`);
-
-            // Повертаємося на початкову сторінку пошуку перед перевіркою пагінації
-            console.log(`\n🔄 Повертаюся на початкову сторінку пошуку...`);
-            try {
-                await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
-                await new Promise(resolve => setTimeout(resolve, 3000));
-            } catch (error) {
-                if (error.message.includes('detached')) {
-                    console.log('⚠️ Frame detached, створюю нову сторінку...');
-                    page = await browser.newPage();
-                    await page.setUserAgent(
-                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    );
-                    await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 30000 });
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                } else {
-                    throw error;
-                }
-            }
-
-            // Перевіряємо, чи є наступна сторінка
-            const nextPageExists = await hasNextPage(page);
-            
-            if (!nextPageExists) {
-                console.log(`📄 Сторінка ${currentPage} - остання`);
-                hasMorePages = false;
-                break;
-            }
+            console.log(`   🔄 Дублікатів: ${pageDuplicates}`);
+            console.log(`   🚫 Відфільтровано: ${pageFiltered}`);
+            console.log(`   ❌ Помилок: ${pageProcessed - pageSuccess - pageDuplicates - pageFiltered}`);
 
             // Переходимо на наступну сторінку
-            console.log(`\n➡️ Переходжу на наступну сторінку...`);
-            const nextPageClicked = await goToNextPage(page);
-            
-            if (!nextPageClicked) {
-                console.log(`⚠️ Не вдалося перейти на наступну сторінку`);
-                hasMorePages = false;
-                break;
-            }
-
             currentPage++;
 
-            // Очікуємо завантаження нової сторінки
-            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {
-                console.log('⏳ Очікую завантаження сторінки...');
-            });
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Додаткова пауза
-
             // Захист від нескінченного циклу
-            if (currentPage > 50) {
-                console.log(`⚠️ Досягнуто ліміт сторінок (50), зупиняю збір`);
+            if (currentPage > 100) {
+                console.log(`⚠️ Досягнуто ліміт сторінок (100), зупиняю збір`);
                 hasMorePages = false;
                 break;
             }
@@ -1294,7 +1493,10 @@ async function main() {
         console.log(`   📄 Оброблено сторінок: ${currentPage}`);
         console.log(`   📊 Всього аукціонів: ${totalProcessed}`);
         console.log(`   ✅ Успішно оброблено: ${totalSuccess}`);
-        console.log(`   ❌ Помилок: ${totalProcessed - totalSuccess}`);
+        console.log(`   🔄 Дублікатів: ${totalDuplicates}`);
+        console.log(`   🚫 Відфільтровано: ${totalFiltered}`);
+        console.log(`   ❌ Помилок: ${totalProcessed - totalSuccess - totalDuplicates - totalFiltered}`);
+        console.log(`   🧹 Розмір кешу URL: ${urlCache.size}`);
 
     } finally {
         await browser.close();
