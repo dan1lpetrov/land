@@ -762,7 +762,7 @@ function shortenPreferentialRight(preferentialRight) {
     return preferentialRight;
 }
 
-async function getAuctionDetails(page, auctionUrl) {
+async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не знайдено') {
     console.log(`🔍 Збираю дані з: ${auctionUrl}`);
     
     try {
@@ -1070,6 +1070,9 @@ async function getAuctionDetails(page, auctionUrl) {
         // Скорочуємо значення переважного права
         details.preferentialRight = shortenPreferentialRight(details.preferentialRight);
         
+        // Додаємо посилання на сторінку пошуку ProZorro
+        details.searchPageUrl = searchPageUrl;
+        
         return details;
         
     } catch (error) {
@@ -1091,7 +1094,8 @@ async function getAuctionDetails(page, auctionUrl) {
             finalPrice: 'Помилка',
             priceIncreasePercent: 'Помилка',
             winner: 'Помилка',
-            preferentialRight: 'Помилка'
+            preferentialRight: 'Помилка',
+            searchPageUrl: searchPageUrl
         };
     }
 }
@@ -1163,7 +1167,8 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
                 'Статус аукціону', 'Кількість учасників', 'Фінальна вартість', 
                 'Відсоток зростання ціни', 'Переможець', 'ID переможця', 'Переважне право',
                 'Організація', 'Контактна особа', 'Телефон', 'Дата аукціону',
-                'Період подачі пропозицій', 'Класифікатор майна', 'Номер лоту', 'Поштовий індекс'
+                'Період подачі пропозицій', 'Класифікатор майна', 'Номер лоту', 'Поштовий індекс',
+                'Сторінка пошуку ProZorro'
             ];
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
@@ -1203,7 +1208,8 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
             rowData.proposalPeriod || 'Не знайдено',
             rowData.propertyClassifier || 'Не знайдено',
             rowData.lotExhibitedBy || 'Не знайдено',
-            rowData.postalCode || 'Не знайдено'
+            rowData.postalCode || 'Не знайдено',
+            rowData.searchPageUrl || 'Не знайдено' // Сторінка пошуку ProZorro
         ];
         
         try {
@@ -1425,7 +1431,7 @@ async function main() {
 
                     // 4. Якщо пройшли всі перевірки - збираємо дані
                     console.log(`✅ [Сторінка ${currentPage}] Аукціон ${pageProcessed} пройшов перевірки, збираю дані...`);
-                    const details = await getAuctionDetails(page, auctionUrl);
+                    const details = await getAuctionDetails(page, auctionUrl, currentPageUrl);
 
                     // 5. Додаємо рядок до Google таблиці
                     const wasAdded = await addRowToAnalyticsSheet(details, spreadsheetId);
@@ -1481,7 +1487,7 @@ async function main() {
 }
 
 // Експортуємо функцію для тестування
-export { getAuctionDetailsFromUaLand };
+export { getAuctionDetailsFromUaLand, getAuctionDetails };
 
 main().catch((e) => {
     console.error(e);
