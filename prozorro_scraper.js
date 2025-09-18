@@ -569,8 +569,8 @@ async function getAuctionDetailsFromUaLand(page, auctionUrl) {
                 }
                 
                 // Якщо не знайдено в h4, шукаємо в описі лоту
-                if (lotExhibitedBy === 'Не знайдено' && lotDescText && lotDescText !== 'Не знайдено') {
-                    const lotMatch = lotDescText.match(/(\d+)\s*торг/i);
+                if (lotExhibitedBy === 'Не знайдено' && results.lotDescription && results.lotDescription !== 'Не знайдено') {
+                    const lotMatch = results.lotDescription.match(/(\d+)\s*торг/i);
                     if (lotMatch) {
                         lotExhibitedBy = lotMatch[1];
                     }
