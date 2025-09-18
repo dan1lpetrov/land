@@ -235,20 +235,31 @@ async function debugUaLand() {
                 
                 results.cadastralNumber = cadastralNumber;
                 
-                // Область - витягуємо з опису лоту
-                const lotDescText = results.lotDescription;
-                if (lotDescText && lotDescText !== 'Не знайдено') {
-                    const regionMatch = lotDescText.match(/([А-Яа-яіїєґІЇЄҐ\s]+)\s*область/i);
-                    if (regionMatch) {
-                        results.region = regionMatch[1].trim() + ' область';
+                // Область - шукаємо h6 з текстом "Область:" і беремо наступний h6
+                const regionLabel = Array.from(allH6Elements).find(h6 => h6.textContent.trim() === 'Область:');
+                if (regionLabel) {
+                    // Знаходимо наступний h6 елемент
+                    const allH6Array = Array.from(allH6Elements);
+                    const regionIndex = allH6Array.indexOf(regionLabel);
+                    if (regionIndex !== -1 && regionIndex + 1 < allH6Array.length) {
+                        const nextH6 = allH6Array[regionIndex + 1];
+                        if (nextH6.textContent.trim() && nextH6.textContent.trim() !== 'Не вказано') {
+                            results.region = nextH6.textContent.trim();
+                        }
                     }
                 }
                 
-                // Населений пункт - витягуємо з опису лоту
-                if (lotDescText && lotDescText !== 'Не знайдено') {
-                    const settlementMatch = lotDescText.match(/область[,\s]+([^,]+)/i);
-                    if (settlementMatch) {
-                        results.settlement = settlementMatch[1].trim();
+                // Населений пункт - шукаємо h6 з текстом "Населений пункт:" і беремо наступний h6
+                const settlementLabel = Array.from(allH6Elements).find(h6 => h6.textContent.trim() === 'Населений пункт:');
+                if (settlementLabel) {
+                    // Знаходимо наступний h6 елемент
+                    const allH6Array = Array.from(allH6Elements);
+                    const settlementIndex = allH6Array.indexOf(settlementLabel);
+                    if (settlementIndex !== -1 && settlementIndex + 1 < allH6Array.length) {
+                        const nextH6 = allH6Array[settlementIndex + 1];
+                        if (nextH6.textContent.trim() && nextH6.textContent.trim() !== 'Не вказано') {
+                            results.settlement = nextH6.textContent.trim();
+                        }
                     }
                 }
                 
