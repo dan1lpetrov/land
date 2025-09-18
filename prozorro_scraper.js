@@ -908,18 +908,35 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                 winner = winnerElement.textContent.trim();
             }
             
-            // Переважне право - шукаємо в details з класом "inform-details lots__wrap" який містить інформацію про переважне право
-            let preferentialRight = 'Не знайдено';
-            const allDetails = document.querySelectorAll('.inform-details.lots__wrap');
+            // Переважне право - тільки статус, без збору назви організації
+            let preferentialRightStatus = 'Не знайдено';
             
-            for (const details of allDetails) {
-                const summary = details.querySelector('.inform-details__summary');
-                if (summary && summary.textContent.includes('переважним правом')) {
-                    // Шукаємо span з назвою організації
-                    const orgNameElement = details.querySelector('span.lots__value');
-                    if (orgNameElement) {
-                        preferentialRight = orgNameElement.textContent.trim();
-                        break;
+            // Визначаємо, чи скористався учасник з переважним правом можливістю виграти
+            // Спочатку перевіряємо, чи є HTML структура результатів аукціону
+            const resultsWrapper = document.querySelector('.results-wrapper');
+            if (resultsWrapper) {
+                // Якщо є структура результатів, використовуємо її для точного визначення
+                const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder');
+                
+                if (priorityBidder) {
+                    // Аналізуємо статус учасника з переважним правом
+                    const priorityText = priorityBidder.textContent.trim().toLowerCase();
+                    
+                    if (priorityText.includes('не скористався ним') || priorityText.includes('не скористався')) {
+                        preferentialRightStatus = 'Не скористався';
+                    } else if (priorityText.includes('був відсутній')) {
+                        preferentialRightStatus = 'Був відсутній';
+                    } else if (priorityText.includes('зробив максимальну цінову пропозицію') || 
+                               priorityText.includes('зробив максимальну пропозицію')) {
+                        preferentialRightStatus = 'Зробив максимальну пропозицію';
+                    } else if (priorityText.includes('переважне право')) {
+                        // Якщо просто "Переважне право" без додаткового тексту, перевіряємо чи це переможець
+                        const priorityBidderContainer = priorityBidder.closest('.results');
+                        if (priorityBidderContainer && priorityBidderContainer.classList.contains('is-winner')) {
+                            preferentialRightStatus = 'Зробив максимальну пропозицію';
+                        } else {
+                            preferentialRightStatus = 'Не скористався';
+                        }
                     }
                 }
             }
@@ -941,7 +958,7 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                 finalPrice,
                 priceIncreasePercent,
                 winner,
-                preferentialRight
+                preferentialRightStatus
             };
         });
         
@@ -962,11 +979,11 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
         console.log(`  Фінальна ціна: ${details.finalPrice}`);
         console.log(`  Зростання ціни: ${details.priceIncreasePercent}%`);
         console.log(`  Переможець: ${details.winner}`);
-        console.log(`  Переважне право: ${details.preferentialRight}`);
+        console.log(`  Статус переважного права: ${details.preferentialRightStatus}`);
         
         // Збираємо результати аукціону з auction.prozorro.sale
         console.log(`🔍 Збираю результати аукціону...`);
-        const auctionResults = await getAuctionResults(page, auctionUrl, details.startPrice);
+        const auctionResults = await analyzeAuctionResults(page, auctionUrl, details.startPrice);
         
         // Оновлюємо дані результатами аукціону
         if (auctionResults.participantsCount !== 'Не знайдено') {
@@ -982,9 +999,9 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
             console.log(`✅ Оновлено переможця: ${details.winner}`);
         }
         // Відсоток зростання ціни буде розрахований формулою в Google Таблиці
-        if (auctionResults.preferentialRight !== 'Не знайдено') {
-            details.preferentialRight = auctionResults.preferentialRight;
-            console.log(`✅ Оновлено переважне право: ${details.preferentialRight}`);
+        if (auctionResults.preferentialRightStatus !== 'Не знайдено') {
+            details.preferentialRightStatus = auctionResults.preferentialRightStatus;
+            console.log(`✅ Оновлено статус переважного права: ${details.preferentialRightStatus}`);
         }
         
         // Перевіряємо, чи потрібно шукати додаткові дані на ua.land
@@ -1486,8 +1503,104 @@ async function main() {
     }
 }
 
+async function analyzeAuctionResults(page, auctionUrl, startPrice) {
+    console.log(`🔍 Аналізую результати аукціону з: ${auctionUrl}`);
+    
+    try {
+        // Переходимо на сторінку результатів аукціону (правильний URL)
+        const resultsUrl = auctionUrl.replace('https://prozorro.sale/auction/', 'https://auction.prozorro.sale/');
+        if (page.url() !== resultsUrl) {
+            await page.goto(resultsUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        // Збираємо результати аукціону
+        const results = await page.evaluate(() => {
+            const resultsWrapper = document.querySelector('.results-wrapper');
+            if (!resultsWrapper) {
+                return {
+                    participantsCount: 'Не знайдено',
+                    finalPrice: 'Не знайдено',
+                    winner: 'Не знайдено',
+                    preferentialRightStatus: 'Не знайдено'
+                };
+            }
+            
+            const allResults = resultsWrapper.querySelectorAll('.results');
+            let participantsCount = allResults.length.toString();
+            let finalPrice = 'Не знайдено';
+            let winner = 'Не знайдено';
+            let preferentialRightStatus = 'Не знайдено';
+            
+            // Знаходимо переможця
+            const winnerElement = resultsWrapper.querySelector('.results.is-winner');
+            if (winnerElement) {
+                const winnerNameElement = winnerElement.querySelector('.results__text');
+                if (winnerNameElement) {
+                    winner = winnerNameElement.textContent.trim();
+                }
+                
+                const winnerPriceElement = winnerElement.querySelector('.results__sum');
+                if (winnerPriceElement) {
+                    finalPrice = winnerPriceElement.textContent.trim().replace(/[^\d.,]/g, '').replace(',', '.');
+                }
+            }
+            
+            // Знаходимо учасника з переважним правом та аналізуємо його статус
+            const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder');
+            if (priorityBidder) {
+                const priorityBidderContainer = priorityBidder.closest('.results');
+                if (priorityBidderContainer) {
+                    // Аналізуємо статус учасника з переважним правом
+                    const priorityText = priorityBidder.textContent.trim().toLowerCase();
+                    
+                    if (priorityText.includes('не скористався ним') || priorityText.includes('не скористався')) {
+                        preferentialRightStatus = 'Не скористався';
+                    } else if (priorityText.includes('був відсутній')) {
+                        preferentialRightStatus = 'Був відсутній';
+                    } else if (priorityText.includes('зробив максимальну цінову пропозицію') || 
+                               priorityText.includes('зробив максимальну пропозицію')) {
+                        preferentialRightStatus = 'Зробив максимальну пропозицію';
+                    } else if (priorityText.includes('переважне право')) {
+                        // Якщо просто "Переважне право" без додаткового тексту, перевіряємо чи це переможець
+                        if (priorityBidderContainer.classList.contains('is-winner')) {
+                            preferentialRightStatus = 'Зробив максимальну пропозицію';
+                        } else {
+                            preferentialRightStatus = 'Не скористався';
+                        }
+                    }
+                }
+            }
+            
+            return {
+                participantsCount,
+                finalPrice,
+                winner,
+                preferentialRightStatus
+            };
+        });
+        
+        console.log(`✅ Результати аукціону:`);
+        console.log(`  Учасників: ${results.participantsCount}`);
+        console.log(`  Фінальна ціна: ${results.finalPrice}`);
+        console.log(`  Переможець: ${results.winner}`);
+        console.log(`  Статус переважного права: ${results.preferentialRightStatus}`);
+        
+        return results;
+        
+    } catch (error) {
+        console.log(`⚠️ Помилка при аналізі результатів аукціону: ${error.message}`);
+        return {
+            participantsCount: 'Не знайдено',
+            finalPrice: 'Не знайдено',
+            winner: 'Не знайдено',
+            preferentialRightStatus: 'Не знайдено'
+        };
+    }
+}
+
 // Експортуємо функцію для тестування
-export { getAuctionDetailsFromUaLand, getAuctionDetails };
+export { getAuctionDetailsFromUaLand, getAuctionDetails, analyzeAuctionResults };
 
 main().catch((e) => {
     console.error(e);
