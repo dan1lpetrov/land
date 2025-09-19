@@ -195,24 +195,32 @@ async function getAuctionResults(page, auctionUrl) {
                 // Відсоток зростання ціни буде розрахований формулою в Google Таблиці
                 
                 // Переважне право - шукаємо в результатах аукціону
-                const winnerResultsElement = document.querySelector('.results.is-winner');
-                if (winnerResultsElement) {
-                    // Перевіряємо, чи є у переможця переважне право
-                    const priorityBidder = winnerResultsElement.querySelector('.results__priority-bidder');
+                const resultsWrapper = document.querySelector('.results-wrapper');
+                if (resultsWrapper) {
+                    const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder, .results__warning.results__priority-bidder');
                     if (priorityBidder) {
-                        results.preferentialRight = 'Зробив максимальну пропозицію';
+                        const priorityBidderContainer = priorityBidder.closest('.results');
+                        if (priorityBidderContainer) {
+                            // Перевіряємо, чи є учасник з переважним правом переможцем
+                            if (priorityBidderContainer.classList.contains('is-winner')) {
+                                results.preferentialRight = 'Скористався переважним правом';
+                            } else {
+                                // Учасник з переважним правом є, але не виграв - значить не скористався
+                                results.preferentialRight = 'Не скористався переважним правом';
+                            }
+                        }
                     } else {
-                        // Шукаємо інформацію про відсутність переважного права
+                        // Якщо немає учасника з переважним правом, перевіряємо чи є інформація про його відсутність
                         const priorityStep = document.querySelector('.priority-step');
                         if (priorityStep) {
-                            const priorityText = priorityStep.textContent.trim();
+                            const priorityText = priorityStep.textContent.trim().toLowerCase();
                             if (priorityText.includes('був відсутній')) {
                                 results.preferentialRight = 'Був відсутній';
                             } else if (priorityText.includes('не скористався')) {
-                                results.preferentialRight = 'Не скористався';
-                            } else {
-                                results.preferentialRight = priorityText;
+                                results.preferentialRight = 'Не скористався переважним правом';
                             }
+                        } else {
+                            results.preferentialRight = 'Немає інформації про переважне право';
                         }
                     }
                 }
@@ -746,7 +754,11 @@ function shortenPreferentialRight(preferentialRight) {
     
     const lowerText = preferentialRight.toLowerCase();
     
-    if (lowerText.includes('не скористався ним') || lowerText.includes('не скористався')) {
+    if (lowerText.includes('скористався переважним правом')) {
+        return 'Скористався';
+    }
+    
+    if (lowerText.includes('не скористався переважним правом')) {
         return 'Не скористався';
     }
     
@@ -754,8 +766,8 @@ function shortenPreferentialRight(preferentialRight) {
         return 'Був відсутній';
     }
     
-    if (lowerText.includes('зробив максимальну цінову пропозицію') || lowerText.includes('зробив максимальну пропозицію')) {
-        return 'Зробив максимальну пропозицію';
+    if (lowerText.includes('немає інформації про переважне право')) {
+        return 'Немає інформації';
     }
     
     // Якщо не знайдено відповідності, повертаємо оригінальне значення
@@ -916,27 +928,31 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
             const resultsWrapper = document.querySelector('.results-wrapper');
             if (resultsWrapper) {
                 // Якщо є структура результатів, використовуємо її для точного визначення
-                const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder');
+                const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder, .results__warning.results__priority-bidder');
                 
                 if (priorityBidder) {
-                    // Аналізуємо статус учасника з переважним правом
-                    const priorityText = priorityBidder.textContent.trim().toLowerCase();
-                    
-                    if (priorityText.includes('не скористався ним') || priorityText.includes('не скористався')) {
-                        preferentialRightStatus = 'Не скористався';
-                    } else if (priorityText.includes('був відсутній')) {
-                        preferentialRightStatus = 'Був відсутній';
-                    } else if (priorityText.includes('зробив максимальну цінову пропозицію') || 
-                               priorityText.includes('зробив максимальну пропозицію')) {
-                        preferentialRightStatus = 'Зробив максимальну пропозицію';
-                    } else if (priorityText.includes('переважне право')) {
-                        // Якщо просто "Переважне право" без додаткового тексту, перевіряємо чи це переможець
-                        const priorityBidderContainer = priorityBidder.closest('.results');
-                        if (priorityBidderContainer && priorityBidderContainer.classList.contains('is-winner')) {
-                            preferentialRightStatus = 'Зробив максимальну пропозицію';
+                    const priorityBidderContainer = priorityBidder.closest('.results');
+                    if (priorityBidderContainer) {
+                        // Перевіряємо, чи є учасник з переважним правом переможцем
+                        if (priorityBidderContainer.classList.contains('is-winner')) {
+                            preferentialRightStatus = 'Скористався переважним правом';
                         } else {
-                            preferentialRightStatus = 'Не скористався';
+                            // Учасник з переважним правом є, але не виграв - значить не скористався
+                            preferentialRightStatus = 'Не скористався переважним правом';
                         }
+                    }
+                } else {
+                    // Якщо немає учасника з переважним правом, перевіряємо чи є інформація про його відсутність
+                    const priorityStep = document.querySelector('.priority-step');
+                    if (priorityStep) {
+                        const priorityText = priorityStep.textContent.trim().toLowerCase();
+                        if (priorityText.includes('був відсутній')) {
+                            preferentialRightStatus = 'Був відсутній';
+                        } else if (priorityText.includes('не скористався')) {
+                            preferentialRightStatus = 'Не скористався переважним правом';
+                        }
+                    } else {
+                        preferentialRightStatus = 'Немає інформації про переважне право';
                     }
                 }
             }
@@ -1548,28 +1564,30 @@ async function analyzeAuctionResults(page, auctionUrl, startPrice) {
             }
             
             // Знаходимо учасника з переважним правом та аналізуємо його статус
-            const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder');
+            const priorityBidder = resultsWrapper.querySelector('.results__priority-bidder, .results__warning.results__priority-bidder');
             if (priorityBidder) {
                 const priorityBidderContainer = priorityBidder.closest('.results');
                 if (priorityBidderContainer) {
-                    // Аналізуємо статус учасника з переважним правом
-                    const priorityText = priorityBidder.textContent.trim().toLowerCase();
-                    
-                    if (priorityText.includes('не скористався ним') || priorityText.includes('не скористався')) {
-                        preferentialRightStatus = 'Не скористався';
-                    } else if (priorityText.includes('був відсутній')) {
-                        preferentialRightStatus = 'Був відсутній';
-                    } else if (priorityText.includes('зробив максимальну цінову пропозицію') || 
-                               priorityText.includes('зробив максимальну пропозицію')) {
-                        preferentialRightStatus = 'Зробив максимальну пропозицію';
-                    } else if (priorityText.includes('переважне право')) {
-                        // Якщо просто "Переважне право" без додаткового тексту, перевіряємо чи це переможець
-                        if (priorityBidderContainer.classList.contains('is-winner')) {
-                            preferentialRightStatus = 'Зробив максимальну пропозицію';
-                        } else {
-                            preferentialRightStatus = 'Не скористався';
-                        }
+                    // Перевіряємо, чи є учасник з переважним правом переможцем
+                    if (priorityBidderContainer.classList.contains('is-winner')) {
+                        preferentialRightStatus = 'Скористався переважним правом';
+                    } else {
+                        // Учасник з переважним правом є, але не виграв - значить не скористався
+                        preferentialRightStatus = 'Не скористався переважним правом';
                     }
+                }
+            } else {
+                // Якщо немає учасника з переважним правом, перевіряємо чи є інформація про його відсутність
+                const priorityStep = document.querySelector('.priority-step');
+                if (priorityStep) {
+                    const priorityText = priorityStep.textContent.trim().toLowerCase();
+                    if (priorityText.includes('був відсутній')) {
+                        preferentialRightStatus = 'Був відсутній';
+                    } else if (priorityText.includes('не скористався')) {
+                        preferentialRightStatus = 'Не скористався переважним правом';
+                    }
+                } else {
+                    preferentialRightStatus = 'Немає інформації про переважне право';
                 }
             }
             
