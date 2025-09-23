@@ -224,7 +224,7 @@ async function getAuctionResults(page, auctionUrl) {
                         }
                     }
                 } else {
-                    // 2. Якщо .priority-step не знайдено, перевіряємо переможця
+                    // 2. Якщо .priority-step не знайдено, перевіряємо переможця на наявність priority-bidder
                     const resultsWrapper = document.querySelector('.results-wrapper');
                     if (resultsWrapper) {
                         const winnerElement = resultsWrapper.querySelector('.results.is-winner');
@@ -233,7 +233,8 @@ async function getAuctionResults(page, auctionUrl) {
                             if (priorityBidder) {
                                 results.preferentialRight = 'Скористався';
                             } else {
-                                results.preferentialRight = 'Не скористався';
+                                // Якщо немає priority-bidder у переможця, це означає що на аукціоні не було учасника з переважним правом
+                                results.preferentialRight = 'Немає учасника з переважним правом';
                             }
                         } else {
                             results.preferentialRight = 'Немає інформації про переважне право';
@@ -785,6 +786,10 @@ function shortenPreferentialRight(preferentialRight) {
         return 'Був відсутній';
     }
     
+    if (lowerText.includes('немає учасника з переважним правом')) {
+        return 'Немає учасника з переважним правом';
+    }
+    
     if (lowerText.includes('немає інформації про переважне право')) {
         return 'Немає інформації';
     }
@@ -972,7 +977,7 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                     }
                 }
             } else {
-                // 2. Якщо .priority-step не знайдено, перевіряємо переможця
+                // 2. Якщо .priority-step не знайдено, перевіряємо переможця на наявність priority-bidder
                 const resultsWrapper = document.querySelector('.results-wrapper');
                 if (resultsWrapper) {
                     const winnerElement = resultsWrapper.querySelector('.results.is-winner');
@@ -981,7 +986,8 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                         if (priorityBidder) {
                             preferentialRightStatus = 'Скористався';
                         } else {
-                            preferentialRightStatus = 'Не скористався';
+                            // Якщо немає priority-bidder у переможця, це означає що на аукціоні не було учасника з переважним правом
+                            preferentialRightStatus = 'Немає учасника з переважним правом';
                         }
                     } else {
                         preferentialRightStatus = 'Немає інформації про переважне право';
@@ -1622,14 +1628,15 @@ async function analyzeAuctionResults(page, auctionUrl, startPrice) {
                     }
                 }
             } else {
-                // 2. Якщо .priority-step не знайдено, перевіряємо переможця
+                // 2. Якщо .priority-step не знайдено, перевіряємо переможця на наявність priority-bidder
                 const winnerElement = resultsWrapper.querySelector('.results.is-winner');
                 if (winnerElement) {
                     const priorityBidder = winnerElement.querySelector('.results__priority-bidder, .results__warning.results__priority-bidder');
                     if (priorityBidder) {
                         preferentialRightStatus = 'Скористався';
                     } else {
-                        preferentialRightStatus = 'Не скористався';
+                        // Якщо немає priority-bidder у переможця, це означає що на аукціоні не було учасника з переважним правом
+                        preferentialRightStatus = 'Немає учасника з переважним правом';
                     }
                 } else {
                     preferentialRightStatus = 'Немає інформації про переважне право';
