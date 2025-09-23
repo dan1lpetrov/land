@@ -879,14 +879,33 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
             
             // Класифікатор майна - шукаємо в характеристиках
             let propertyClassifier = 'Не знайдено';
+            let additionalClassifier1 = 'Не знайдено';
+            let additionalClassifier2 = 'Не знайдено';
+            
             const characteristicsItems = document.querySelectorAll('.characteristics__item');
+            let additionalClassifierCount = 0;
+            
             for (const item of characteristicsItems) {
                 const nameElement = item.querySelector('.characteristics__name');
-                if (nameElement && nameElement.textContent.trim() === 'Класифікатор:') {
-                    const valueElement = item.querySelector('.characteristics__value');
-                    if (valueElement) {
-                        propertyClassifier = valueElement.textContent.trim();
-                        break;
+                if (nameElement) {
+                    const nameText = nameElement.textContent.trim();
+                    
+                    if (nameText === 'Класифікатор:') {
+                        const valueElement = item.querySelector('.characteristics__value');
+                        if (valueElement) {
+                            propertyClassifier = valueElement.textContent.trim();
+                        }
+                    } else if (nameText === 'Додатковий класифікатор:') {
+                        const valueElement = item.querySelector('.characteristics__value');
+                        if (valueElement) {
+                            if (additionalClassifierCount === 0) {
+                                additionalClassifier1 = valueElement.textContent.trim();
+                                additionalClassifierCount++;
+                            } else if (additionalClassifierCount === 1) {
+                                additionalClassifier2 = valueElement.textContent.trim();
+                                additionalClassifierCount++;
+                            }
+                        }
                     }
                 }
             }
@@ -1015,7 +1034,9 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                 priceIncreasePercent,
                 winner,
                 preferentialRightStatus,
-                propertyClassifier
+                propertyClassifier,
+                additionalClassifier1,
+                additionalClassifier2
             };
         });
         
@@ -1032,6 +1053,8 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
         console.log(`  КОАТУУ: ${details.koatuu}`);
         console.log(`  Координати: ${details.coordinates}`);
         console.log(`  Класифікатор майна: ${details.propertyClassifier}`);
+        console.log(`  Додатковий класифікатор 1: ${details.additionalClassifier1}`);
+        console.log(`  Додатковий класифікатор 2: ${details.additionalClassifier2}`);
         console.log(`  Статус: ${details.auctionStatus}`);
         console.log(`  Учасники: ${details.participantsCount}`);
         console.log(`  Фінальна ціна: ${details.finalPrice}`);
@@ -1168,6 +1191,8 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
             winner: 'Помилка',
             preferentialRightStatus: 'Помилка',
             propertyClassifier: 'Помилка',
+            additionalClassifier1: 'Помилка',
+            additionalClassifier2: 'Помилка',
             searchPageUrl: searchPageUrl
         };
     }
@@ -1240,12 +1265,12 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
                 'Статус аукціону', 'Кількість учасників', 'Фінальна вартість', 'Фінальна вартість га',
                 'Відсоток зростання ціни', 'Переможець', 'ID переможця', 'Переважне право',
                 'Організація', 'Контактна особа', 'Телефон', 'Дата аукціону',
-                'Період подачі пропозицій', 'Класифікатор майна', 'Номер лоту', 'Поштовий індекс',
+                'Період подачі пропозицій', 'Класифікатор майна', 'Дод клас', 'Дод клас2', 'Номер лоту', 'Поштовий індекс',
                 'Сторінка пошуку ProZorro'
             ];
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: 'Аналітика!A1',
+                range: 'Аналітика!A1:AE1',
                 valueInputOption: 'RAW',
                 resource: { values: [headers] },
             });
@@ -1281,6 +1306,8 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
             rowData.auctionDate || 'Не знайдено',
             rowData.proposalPeriod || 'Не знайдено',
             rowData.propertyClassifier || 'Не знайдено',
+            rowData.additionalClassifier1 || 'Не знайдено',
+            rowData.additionalClassifier2 || 'Не знайдено',
             rowData.lotExhibitedBy || 'Не знайдено',
             rowData.postalCode || 'Не знайдено',
             rowData.searchPageUrl || 'Не знайдено' // Сторінка пошуку ProZorro
@@ -1289,7 +1316,7 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
         try {
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `Аналітика!A${currentRow}`,
+                range: `Аналітика!A${currentRow}:AE${currentRow}`,
                 valueInputOption: 'USER_ENTERED',
                 resource: { values: [row] },
             });
@@ -1309,7 +1336,7 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
                 // Отримуємо метадані таблиці
                 const metadata = await sheets.spreadsheets.get({
                     spreadsheetId,
-                    ranges: ['Аналітика!A:AC'],
+                    ranges: ['Аналітика!A:AE'],
                     fields: 'sheets.properties'
                 });
                 
@@ -1337,7 +1364,7 @@ async function addRowToAnalyticsSheet(rowData, spreadsheetId) {
                 // Тепер додаємо рядок
                 await sheets.spreadsheets.values.update({
                     spreadsheetId,
-                    range: `Аналітика!A${currentRow}`,
+                    range: `Аналітика!A${currentRow}:AE${currentRow}`,
                     valueInputOption: 'USER_ENTERED',
                     resource: { values: [row] },
                 });
