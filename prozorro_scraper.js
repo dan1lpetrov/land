@@ -566,20 +566,7 @@ async function getAuctionDetailsFromUaLand(page, auctionUrl) {
                     }
                 }
                 
-                // Класифікатор майна - шукаємо в accordion "Склад лота"
-                for (const accordion of accordions) {
-                    const summary = accordion.querySelector('.MuiAccordionSummary-root');
-                    if (summary && summary.textContent.includes('Склад лота')) {
-                        const details = accordion.querySelector('.MuiAccordionDetails-root');
-                        if (details) {
-                            const classifierMatch = details.textContent.match(/Класифікатор майна\/активів:([^\n]+)/);
-                            if (classifierMatch) {
-                                results.propertyClassifier = classifierMatch[1].trim();
-                                break;
-                            }
-                        }
-                    }
-                }
+                // Класифікатор майна тепер збирається на prozorro.sale, не потрібно збирати тут
                 
                 // Лот виставляється - спочатку шукаємо в h4 елементах
                 let lotExhibitedBy = 'Не знайдено';
@@ -705,7 +692,6 @@ async function getAuctionDetailsFromUaLand(page, auctionUrl) {
         console.log(`  Телефон: ${additionalDetails.phoneNumber}`);
         console.log(`  Дата аукціону: ${additionalDetails.auctionDate}`);
         console.log(`  Період подачі пропозицій: ${additionalDetails.proposalPeriod}`);
-        console.log(`  Класифікатор майна: ${additionalDetails.propertyClassifier}`);
         console.log(`  Лот виставляється: ${additionalDetails.lotExhibitedBy}`);
         console.log(`  Поштовий індекс: ${additionalDetails.postalCode}`);
         
@@ -891,6 +877,20 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
             // Населений пункт - не шукаємо на prozorro.sale
             let settlement = 'Не знайдено';
             
+            // Класифікатор майна - шукаємо в характеристиках
+            let propertyClassifier = 'Не знайдено';
+            const characteristicsItems = document.querySelectorAll('.characteristics__item');
+            for (const item of characteristicsItems) {
+                const nameElement = item.querySelector('.characteristics__name');
+                if (nameElement && nameElement.textContent.trim() === 'Класифікатор:') {
+                    const valueElement = item.querySelector('.characteristics__value');
+                    if (valueElement) {
+                        propertyClassifier = valueElement.textContent.trim();
+                        break;
+                    }
+                }
+            }
+            
             // КОАТУУ
             let koatuu = 'Не знайдено';
             const koatuuElement = document.querySelector('[data-field="koatuu"], .koatuu');
@@ -1014,7 +1014,8 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                 finalPrice,
                 priceIncreasePercent,
                 winner,
-                preferentialRightStatus
+                preferentialRightStatus,
+                propertyClassifier
             };
         });
         
@@ -1030,6 +1031,7 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
         console.log(`  Населений пункт: ${details.settlement}`);
         console.log(`  КОАТУУ: ${details.koatuu}`);
         console.log(`  Координати: ${details.coordinates}`);
+        console.log(`  Класифікатор майна: ${details.propertyClassifier}`);
         console.log(`  Статус: ${details.auctionStatus}`);
         console.log(`  Учасники: ${details.participantsCount}`);
         console.log(`  Фінальна ціна: ${details.finalPrice}`);
@@ -1126,10 +1128,7 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
                 details.proposalPeriod = additionalDetails.proposalPeriod;
                 console.log(`✅ Додано період подачі пропозицій: ${details.proposalPeriod}`);
             }
-            if (additionalDetails.propertyClassifier !== 'Не знайдено') {
-                details.propertyClassifier = additionalDetails.propertyClassifier;
-                console.log(`✅ Додано класифікатор майна: ${details.propertyClassifier}`);
-            }
+            // Класифікатор майна тепер збирається на prozorro.sale, не перезаписуємо
             if (additionalDetails.lotExhibitedBy !== 'Не знайдено') {
                 details.lotExhibitedBy = additionalDetails.lotExhibitedBy;
                 console.log(`✅ Додано номер лоту: ${details.lotExhibitedBy}`);
@@ -1168,6 +1167,7 @@ async function getAuctionDetails(page, auctionUrl, searchPageUrl = 'Не зна�
             priceIncreasePercent: 'Помилка',
             winner: 'Помилка',
             preferentialRightStatus: 'Помилка',
+            propertyClassifier: 'Помилка',
             searchPageUrl: searchPageUrl
         };
     }
