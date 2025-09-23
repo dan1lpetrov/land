@@ -14,13 +14,17 @@ function absolutize(url) {
     return new URL(url, `${base.protocol}//${base.host}`).toString();
 }
 
+function extractPageNumber(baseUrl) {
+    const url = new URL(baseUrl);
+    const pageParam = url.searchParams.get('page');
+    return pageParam ? parseInt(pageParam, 10) : 1;
+}
+
 function buildPageUrl(baseUrl, pageNumber) {
     const url = new URL(baseUrl);
-    if (pageNumber === 1) {
-        url.searchParams.delete('page');
-    } else {
-        url.searchParams.set('page', pageNumber.toString());
-    }
+    // Спочатку видаляємо старий параметр page, потім додаємо новий
+    url.searchParams.delete('page');
+    url.searchParams.set('page', pageNumber.toString());
     return url.toString();
 }
 
@@ -871,6 +875,11 @@ async function main() {
             return;
         }
         
+        // Визначаємо початкову сторінку з BASE_URL
+        const startPage = extractPageNumber(BASE);
+        console.log(`🔧 BASE_URL: ${BASE}`);
+        console.log(`🔧 Початкова сторінка: ${startPage}`);
+        
         // Очищаємо таблицю перед початком
         // Отримуємо поточну кількість рядків у таблиці
         let startRow = 1;
@@ -892,12 +901,13 @@ async function main() {
         // Збираємо посилання з усіх сторінок
         console.log('\n🔍 Починаю збір посилань з усіх сторінок...');
         let allLinks = [];
-        let currentPage = 1;
+        let currentPage = startPage; // Починаємо зі сторінки, вказаної в BASE_URL
         let rowCounter = startRow - 1;
 
         while (true) {
             const pageUrl = buildPageUrl(BASE, currentPage);
             console.log(`\n📄 Обробляю сторінку ${currentPage}: ${pageUrl}`);
+            console.log(`🔗 BASE URL: ${BASE}`);
             
             try {
                 await page.goto(pageUrl, { waitUntil: 'networkidle2', timeout: 60000 });
