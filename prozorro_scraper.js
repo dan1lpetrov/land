@@ -3,10 +3,95 @@ import 'dotenv/config';
 import puppeteer from 'puppeteer';
 import { google } from 'googleapis';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
 let BASE_URL = process.env.PROZORRO_BASE_URL; // буде оновлено з Google таблиці
+const PROZORRO_LOCK_FILE = path.join(process.env.LOCK_DIR || '/tmp', 'ua-land-prozorro.lock');
+ensureSingleInstance(PROZORRO_LOCK_FILE, 'prozorro_scraper.js');
+
+function ensureSingleInstance(lockPath, scriptName) {
+    const lockDir = path.dirname(lockPath);
+    if (!fs.existsSync(lockDir)) {
+        fs.mkdirSync(lockDir, { recursive: true });
+    }
+
+    const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+
+    const createLock = () => {
+        const fd = fs.openSync(lockPath, 'wx');
+        fs.writeSync(fd, payload);
+        fs.closeSync(fd);
+    };
+
+    try {
+        createLock();
+    } catch (error) {
+        if (error.code === 'EEXIST') {
+            let existingPid;
+            try {
+                const content = fs.readFileSync(lockPath, 'utf8').trim();
+                if (content) {
+                    try {
+                        const parsed = JSON.parse(content);
+                        existingPid = parsed.pid;
+                    } catch {
+                        existingPid = Number(content);
+                    }
+                }
+            } catch {
+                // ignore read errors, handle below
+            }
+
+            if (existingPid) {
+                try {
+                    process.kill(existingPid, 0);
+                    console.error(`❌ ${scriptName} вже виконується (PID ${existingPid}).`);
+                    process.exit(1);
+                } catch (killError) {
+                    if (killError.code === 'ESRCH') {
+                        console.log('🔁 Застарілий lock-файл знайдено, видаляю та продовжую...');
+                        fs.unlinkSync(lockPath);
+                        createLock();
+                    } else {
+                        throw killError;
+                    }
+                }
+            } else {
+                console.error(`❌ ${scriptName} вже виконується (lock-файл: ${lockPath}).`);
+                process.exit(1);
+            }
+        } else {
+            throw error;
+        }
+    }
+
+    const release = () => {
+        try {
+            fs.unlinkSync(lockPath);
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                console.warn(`⚠️ Не вдалося видалити lock-файл ${lockPath}: ${err.message}`);
+            }
+        }
+    };
+
+    const gracefulExit = (code = 0) => {
+        release();
+        process.exit(code);
+    };
+
+    process.once('SIGINT', () => gracefulExit(0));
+    process.once('SIGTERM', () => gracefulExit(0));
+    process.once('SIGQUIT', () => gracefulExit(0));
+    process.once('uncaughtException', (err) => {
+        console.error('❌ Неперехоплена помилка:', err);
+        gracefulExit(1);
+    });
+    process.once('exit', release);
+}
 
 // Налаштування Google Sheets API
 function getGoogleSheets() {

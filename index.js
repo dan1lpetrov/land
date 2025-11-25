@@ -2,10 +2,96 @@ import 'dotenv/config';
 import puppeteer from 'puppeteer';
 import { google } from 'googleapis';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
 let BASE = process.env.BASE_URL; // буде оновлено з Google таблиці
+const LOCK_FILE_PATH = path.join(process.env.LOCK_DIR || '/tmp', 'ua-land-index.lock');
+const urlCache = new Set();
+ensureSingleInstance(LOCK_FILE_PATH, 'index.js');
+
+function ensureSingleInstance(lockPath, scriptName) {
+    const lockDir = path.dirname(lockPath);
+    if (!fs.existsSync(lockDir)) {
+        fs.mkdirSync(lockDir, { recursive: true });
+    }
+
+    const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() });
+
+    const createLock = () => {
+        const fd = fs.openSync(lockPath, 'wx');
+        fs.writeSync(fd, payload);
+        fs.closeSync(fd);
+    };
+
+    try {
+        createLock();
+    } catch (error) {
+        if (error.code === 'EEXIST') {
+            let existingPid;
+            try {
+                const content = fs.readFileSync(lockPath, 'utf8').trim();
+                if (content) {
+                    try {
+                        const parsed = JSON.parse(content);
+                        existingPid = parsed.pid;
+                    } catch {
+                        existingPid = Number(content);
+                    }
+                }
+            } catch {
+                // ignore read errors, we'll handle below
+            }
+
+            if (existingPid) {
+                try {
+                    process.kill(existingPid, 0);
+                    console.error(`❌ ${scriptName} вже виконується (PID ${existingPid}).`);
+                    process.exit(1);
+                } catch (killError) {
+                    if (killError.code === 'ESRCH') {
+                        console.log('🔁 Застарілий lock-файл знайдено, видаляю та продовжую...');
+                        fs.unlinkSync(lockPath);
+                        createLock();
+                    } else {
+                        throw killError;
+                    }
+                }
+            } else {
+                console.error(`❌ ${scriptName} вже виконується (lock-файл: ${lockPath}).`);
+                process.exit(1);
+            }
+        } else {
+            throw error;
+        }
+    }
+
+    const release = () => {
+        try {
+            fs.unlinkSync(lockPath);
+        } catch (err) {
+            if (err.code !== 'ENOENT') {
+                console.warn(`⚠️ Не вдалося видалити lock-файл ${lockPath}: ${err.message}`);
+            }
+        }
+    };
+
+    const gracefulExit = (code = 0) => {
+        release();
+        process.exit(code);
+    };
+
+    process.once('SIGINT', () => gracefulExit(0));
+    process.once('SIGTERM', () => gracefulExit(0));
+    process.once('SIGQUIT', () => gracefulExit(0));
+    process.once('uncaughtException', (err) => {
+        console.error('❌ Неперехоплена помилка:', err);
+        gracefulExit(1);
+    });
+    process.once('exit', release);
+}
 
 function absolutize(url) {
     if (!url) return null;
@@ -81,14 +167,30 @@ async function getAuctionLinks(page) {
         for (let i = 0; i < result.snapshotLength; i++) {
             const node = result.snapshotItem(i);
             if (node && node.getAttribute('href')) {
-                out.push(node.getAttribute('href'));
+                const titleElement = node.querySelector('h4');
+                const titleText = titleElement?.textContent?.trim();
+                const fallbackText = node.textContent?.trim();
+                
+                out.push({
+                    href: node.getAttribute('href'),
+                    title: titleText || fallbackText || ''
+                });
             }
         }
         return out;
     }, xpathSelector);
 
     console.log(`✅ Фінальний результат XPath: ${links.length} посилань`);
-    return [...new Set(links)];
+    // Видаляємо дублікати за href
+    const uniqueLinks = [];
+    const seen = new Set();
+    for (const link of links) {
+        if (!seen.has(link.href)) {
+            seen.add(link.href);
+            uniqueLinks.push(link);
+        }
+    }
+    return uniqueLinks;
 }
 
 async function getAuctionDetails(page, auctionUrl) {
@@ -695,6 +797,86 @@ async function getBaseUrlFromGoogleSheet() {
     }
 }
 
+async function getStopWordsFromGoogleSheet() {
+    try {
+        const sheets = getGoogleSheets();
+        const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
+        
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'змінні!B1',
+        });
+        
+        if (response.data.values && response.data.values[0] && response.data.values[0][0]) {
+            const stopWordsText = response.data.values[0][0].trim();
+            console.log(`📋 Отримано стоп-слова з Google таблиці: ${stopWordsText}`);
+            
+            // Розбиваємо по комах і очищаємо від пробілів
+            const stopWords = stopWordsText.split(',').map(word => word.trim().toLowerCase());
+            console.log(`📝 Стоп-слова для фільтрації: ${stopWords.join(', ')}`);
+            return stopWords;
+        } else {
+            console.log('⚠️ Не знайдено стоп-слова в клітинці змінні!B1');
+            return []; // Повертаємо порожній масив
+        }
+    } catch (error) {
+        console.log('⚠️ Помилка отримання стоп-слів з Google таблиці:', error.message);
+        return []; // Повертаємо порожній масив
+    }
+}
+
+function shouldSkipAuction(lotDescription, stopWords) {
+    if (!lotDescription || lotDescription === 'Не знайдено') return false;
+    
+    const lowerDescription = lotDescription.toLowerCase();
+    
+    // Перевіряємо кожне стоп-слово
+    for (const stopWord of stopWords) {
+        if (lowerDescription.includes(stopWord)) {
+            console.log(`⏭️ Пропускаю аукціон: "${lotDescription.substring(0, 100)}..." (містить стоп-слово: "${stopWord}")`);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+async function loadExistingUrls(spreadsheetId) {
+    console.log('📂 Завантажую існуючі URL з таблиці...');
+    urlCache.clear();
+
+    try {
+        const sheets = getGoogleSheets();
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: 'A:A',
+        });
+
+        if (response.data.values) {
+            response.data.values.forEach((row, index) => {
+                const url = row[0]?.trim();
+                if (url && url.startsWith('http')) {
+                    urlCache.add(url);
+                }
+            });
+        }
+
+        console.log(`📚 В кеші ${urlCache.size} URL`);
+    } catch (error) {
+        console.log(`⚠️ Не вдалося завантажити існуючі URL: ${error.message}`);
+    }
+}
+
+function isUrlDuplicate(url) {
+    return urlCache.has(url);
+}
+
+function rememberUrl(url) {
+    if (url) {
+        urlCache.add(url);
+    }
+}
+
 async function saveToGoogleSheets(data, spreadsheetId) {
     try {
         const sheets = getGoogleSheets();
@@ -875,6 +1057,12 @@ async function main() {
             return;
         }
         
+        // Отримуємо стоп-слова з Google таблиці
+        const stopWords = await getStopWordsFromGoogleSheet();
+
+        // Завантажуємо існуючі URL, щоб уникати дублікатів
+        await loadExistingUrls(spreadsheetId);
+        
         // Визначаємо початкову сторінку з BASE_URL
         const startPage = extractPageNumber(BASE);
         console.log(`🔧 BASE_URL: ${BASE}`);
@@ -890,9 +1078,12 @@ async function main() {
                 range: 'A:A',
             });
             
-            if (response.data.values) {
-                startRow = response.data.values.length + 1;
-            }
+        if (response.data.values) {
+            const nonEmptyRows = response.data.values.filter(row => 
+                row.some(cell => cell && cell.toString().trim() !== '')
+            );
+            startRow = nonEmptyRows.length + 1;
+        }
             console.log(`📊 Починаю з рядка ${startRow}`);
         } catch (error) {
             console.log('📊 Починаю з першого рядка (новий файл)');
@@ -970,16 +1161,37 @@ async function main() {
                 console.log(`✅ Знайдено ${pageLinks.length} посилань на сторінці ${currentPage}`);
                 
                 // Обробляємо всі посилання на сторінці
-                for (const link of pageLinks) {
-                    const url = absolutize(link);
-                    rowCounter++;
-                    
-                    console.log(`\n📋 Обробляю ${rowCounter}: ${url}`);
-                    
-                    const details = await getAuctionDetails(page, url);
-                    
-                    // Додаємо рядок одразу в Google Таблицю
-                    await addRowToGoogleSheets(details, spreadsheetId, rowCounter);
+        for (const link of pageLinks) {
+            const url = absolutize(link.href);
+            const previewTitle = link.title || '';
+
+            if (isUrlDuplicate(url)) {
+                console.log(`⏭️ Пропускаю аукціон: ${url} вже є в таблиці`);
+                continue;
+            }
+
+            // Швидка перевірка за назвою (щоб не заходити на сторінку)
+            if (shouldSkipAuction(previewTitle, stopWords)) {
+                console.log(`⏭️ Пропускаю аукціон на сторінці списку: "${previewTitle}"`);
+                continue;
+            }
+            
+            console.log(`\n📋 Попередньо обробляю: ${url} | "${previewTitle}"`);
+            
+            const details = await getAuctionDetails(page, url);
+            
+            // Додаткова перевірка після завантаження сторінки (наприклад, якщо стоп-слово тільки в описі)
+            if (shouldSkipAuction(details.lotDescription, stopWords)) {
+                console.log(`⏭️ Аукціон пропущено після детального перегляду: "${details.lotDescription.substring(0, 80)}..."`);
+                continue;
+            }
+
+            rowCounter++;
+            console.log(`📋 Обробляю ${rowCounter}: ${url}`);
+            
+            // Додаємо рядок одразу в Google Таблицю
+            await addRowToGoogleSheets(details, spreadsheetId, rowCounter);
+            rememberUrl(url);
                 }
                 
                 currentPage++;
